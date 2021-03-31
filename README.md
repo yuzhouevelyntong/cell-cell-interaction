@@ -31,4 +31,15 @@ The final  figures are in the `visualization/` folder
 
 To reproduce the analysis in this repo, you will need to install the following packages: dplyr, Seurat, patchwork, ggplot2, Connectome, Rstudio(optional)
 
+# Pseudocode to generate the first figure (pset4)
 
+Pseudocode:
+1. extract data and metadata from the csv files
+2. create Seurat object for the counts of each cell
+3. normalize the data
+4. identify the 10 most variable genes
+5. plot the variable features w/ labels
+6. perform PCA dimensional reduction
+7. visualize PCA clusters
+7. find clusters with UMAP and tSNE using only significant PCs
+8. plot clusters
