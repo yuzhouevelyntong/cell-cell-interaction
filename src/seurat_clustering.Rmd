@@ -1,0 +1,77 @@
+---
+title: "Seurat Clustering R Notebook"
+output: html_notebook
+---
+```{r}
+library(dplyr)
+library(Seurat)
+library(patchwork)
+library(ggplot2)
+```
+```{r}
+pd.data <- read.csv("data/PDAC_Biopsies_23042cells_RawCounts.csv",sep=",", header=T,row.names=1, check.names=FALSE)
+pd.meta <- read.csv("data/PDAC_Biopsies_23042cells_Metadata.csv",sep=",", header=T,row.names=1)
+```
+```{r}
+genes <- row.names(pd.data)
+#createSeuratObject for all cells
+pd <- CreateSeuratObject(counts = pd.data, project = "pd",min.cells = 50, min.features = 200, is.expr=1, meta.data=pd.meta)
+Idents(pd) <- "cell.types"
+table(Idents(pd)) 
+```
+```{r}
+pd <- NormalizeData(pd, normalization.method = "LogNormalize", scale.factor = 10000)
+pd <- FindVariableFeatures(pd, selection.method = "vst", nfeatures = 1070) 
+pd[["percent.mt"]] <- PercentageFeatureSet(object = pd, pattern = "^MT-")
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(pd), 10)
+```
+```{r}
+# Plot variable features with labels
+plot1 <- VariableFeaturePlot(pd)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot2
+VlnPlot(pd, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0.05)
+```
+```{r}
+gene.names <- rownames(pd)
+pd <- ScaleData(pd)
+pd <- RunPCA(pd, verbose = FALSE) # default features are previously
+```
+#### Visualize PCA results
+```{r}
+print(pd[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(pd, dims = 1:2, reduction = "pca")
+DimPlot(pd, reduction = "pca")
+# Identify sig PCs
+# direct visualization 
+DimHeatmap(pd, dims = 1:15, cells = 500, balanced = TRUE)
+```
+#### find clusters
+```{r}
+pd <- FindNeighbors(pd, dims = 1:45) # only using significant PCs
+pd <- FindClusters(pd)
+pd <- RunUMAP(pd, dims = 1:45)
+pd <- RunTSNE(pd, dims = 1:45)
+```
+#### plot clusters
+```{r, fig.width=6, fig.height=6}
+DimPlot(pd, label = TRUE) + NoLegend()
+DimPlot(pd, group.by = "cell.types", label = TRUE)
+DimPlot(pd, label = TRUE, reduction = 'tsne') + NoLegend()
+DimPlot(pd, label = TRUE, reduction = 'tsne', group.by = "cell.types", repel = TRUE) + NoLegend() + labs(title='Cell Type Visualization') + theme(plot.title = element_text(hjust = 0.5))
+```
+```{r, fig.width=6, fig.height=6}
+pdf('visualization/TSNEplot_all_cells.pdf')
+DimPlot(pd, label = TRUE, reduction = 'tsne', group.by = "cell.types", repel = TRUE) + NoLegend() + labs(title='Cell Type Visualization') + theme(plot.title = element_text(hjust = 0.5))
+dev.off()
+```
+```{r}
+
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
