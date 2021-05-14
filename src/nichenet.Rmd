@@ -1,0 +1,289 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+library(nichenetr)
+library(Seurat) # please update to Seurat V4
+library(tidyverse)
+```
+#### load reference data
+```{r}
+ligand_target_matrix = readRDS(url("https://zenodo.org/record/3260758/files/ligand_target_matrix.rds"))
+lr_network = readRDS(url("https://zenodo.org/record/3260758/files/lr_network.rds"))
+weighted_networks = readRDS(url("https://zenodo.org/record/3260758/files/weighted_networks.rds"))
+```
+```{r}
+weighted_networks_lr = weighted_networks$lr_sig %>% inner_join(lr_network %>% distinct(from,to), by = c("from","to"))
+```
+
+#### visualize cell types
+```{r}
+pd@meta.data$cell.types %>% table() 
+DimPlot(pd.full, reduction = "tsne", group.by = "cell.types")
+pd@meta.data$Tumor.class %>% table()
+DimPlot(pd.full, reduction = "tsne", group.by = "Tumor.class")
+```
+```{r}
+Idents(pd.full) <- "Tumor.class"
+pd.nontumor <- subset(pd.full, cells = which(is.na(pd.full@meta.data$Tumor.class)), invert =TRUE)
+#pd.nontumor <- subset(pd.nontumor, cells = "181024_PANFR0383_T2_1digest_AAACAATCTAGT", invert =TRUE)
+Idents(pd.nontumor) <- "Tumor.class"
+pd.nontumor <- subset(pd.full, idents = c("Basal","Classical"))
+```
+#### visualize cell types
+```{r}
+pd.nontumor@meta.data$cell.types %>% table() 
+DimPlot(pd.nontumor, reduction = "tsne", group.by = "cell.types.complex")
+pd.nontumor@meta.data$Tumor.class %>% table()
+DimPlot(pd.nontumor, reduction = "tsne", group.by = "Tumor.class")
+```
+
+```{r}
+Idents(pd.nontumor) <- "cell.types"
+nichenet_output = nichenet_seuratobj_aggregate(
+  seurat_obj = pd.nontumor, 
+  receiver = "Macrophage", 
+  condition_colname = "Tumor.class", condition_oi = "Basal", condition_reference = "Classical", 
+  sender = c("T_Cells","T_Regs", "Endothelial","Fibroblasts","DC"), 
+  ligand_target_matrix = ligand_target_matrix, lr_network = lr_network, weighted_networks = weighted_networks, organism = "human")
+
+```
+```{r}
+nichenet_output$top_ligands
+DotPlot(pd.nontumor, features = nichenet_output$top_ligands %>% rev(), cols = "RdYlBu") + RotatedAxis()
+DotPlot(pd.nontumor, features = nichenet_output$top_ligands %>% rev(), split.by = "Tumor.class") + RotatedAxis()
+nichenet_output$ligand_target_heatmap
+nichenet_output$ligand_activity_target_heatmap
+```
+
+
+```{r}
+Idents(pd.nontumor) <- "cell.types.complex"
+nichenet_output = nichenet_seuratobj_aggregate(
+  seurat_obj = pd.nontumor, 
+  receiver = "DC", 
+  condition_colname = "Tumor.class", condition_oi = "Basal", condition_reference = "Classical", 
+  sender = c("SPP1_mono","C1QC_mono"), 
+  ligand_target_matrix = ligand_target_matrix, lr_network = lr_network, weighted_networks = weighted_networks, organism = "human")
+
+```
+```{r}
+nichenet_output$top_ligands
+DotPlot(pd.nontumor, features = nichenet_output$top_ligands %>% rev(), cols = "RdYlBu") + RotatedAxis()
+DotPlot(pd.nontumor, features = nichenet_output$top_ligands %>% rev(), split.by = "Tumor.class") + RotatedAxis()
+nichenet_output$ligand_target_heatmap
+nichenet_output$ligand_activity_target_heatmap
+nichenet_output$ligand_receptor_heatmap
+```
+
+```{r}
+## receiver
+Idents(pd.nontumor) <- "cell.types.complex"
+receiver = c("DC")
+expressed_genes_receiver = get_expressed_genes(receiver, pd.nontumor, pct = 0.5)
+background_expressed_genes = expressed_genes_receiver %>% .[. %in% rownames(ligand_target_matrix)]
+```
+```{r}
+## sender
+sender_celltypes = c("SPP1_mono")
+list_expressed_genes_sender = sender_celltypes %>% unique() %>% lapply(get_expressed_genes, pd.nontumor, 0.2) # lapply to get the expressed genes of every sender cell type separately here
+expressed_genes_sender = list_expressed_genes_sender %>% unlist() %>% unique()
+```
+
+```{r}
+Idents(pd.nontumor) <- "cell.types.complex"
+seurat_obj_receiver= subset(pd.nontumor, idents = receiver)
+seurat_obj_receiver = SetIdent(seurat_obj_receiver, value = seurat_obj_receiver[["Tumor.class"]])
+
+condition_oi = "Classical"
+condition_reference = "Basal" 
+  
+DE_table_receiver = FindMarkers(object = seurat_obj_receiver, ident.1 = condition_oi, ident.2 = condition_reference, min.pct = 0.10) %>% rownames_to_column("gene")
+
+geneset_oi = DE_table_receiver %>% filter(p_val_adj <= 0.05 & abs(avg_log2FC) >= 0.25) %>% pull(gene)
+geneset_oi = geneset_oi %>% .[. %in% rownames(ligand_target_matrix)]
+
+#DE_table_receiver <- FindMarkers(pd.nontumor, ident.1 = "SPP1_mono", ident.2 = "C1QC_mono")
+DE_table_receiver %>% rownames_to_column("gene")
+```
+```{r}
+geneset_oi = DE_table_receiver %>% filter(p_val_adj <= 0.05 & abs(avg_log2FC) >= 0.25) %>% pull(gene)
+geneset_oi = geneset_oi %>% .[. %in% rownames(ligand_target_matrix)]
+```
+```{r}
+ligands = lr_network %>% pull(from) %>% unique()
+receptors = lr_network %>% pull(to) %>% unique()
+
+expressed_ligands = intersect(ligands,expressed_genes_sender)
+expressed_receptors = intersect(receptors,expressed_genes_receiver)
+
+potential_ligands = lr_network %>% filter(from %in% expressed_ligands & to %in% expressed_receptors) %>% pull(from) %>% unique()
+```
+```{r}
+ligand_activities = predict_ligand_activities(geneset = geneset_oi, background_expressed_genes = background_expressed_genes, ligand_target_matrix = ligand_target_matrix, potential_ligands = potential_ligands)
+
+ligand_activities = ligand_activities %>% arrange(-pearson) %>% mutate(rank = rank(desc(pearson)))
+ligand_activities
+```
+```{r}
+best_upstream_ligands = ligand_activities %>% top_n(20, pearson) %>% arrange(-pearson) %>% pull(test_ligand) %>% unique()
+best_upstream_ligands <- c(best_upstream_ligands, "MMP9","FN1","SPP1")
+torm <- c("CD6","SELL","DUSP18","DSC2","SEMA4D","HLA-DRA","PTDSS1","HLA-DMA","IL1B","CLEC11A")
+best_upstream_ligands <- best_upstream_ligands[!best_upstream_ligands %in% torm]
+```
+```{r}
+DotPlot(pd.nontumor, features = best_upstream_ligands %>% rev(), cols = "RdYlBu", idents = c("SPP1_mono","C1QC_mono")) + RotatedAxis()
+```
+```{r}
+active_ligand_target_links_df = best_upstream_ligands %>% lapply(get_weighted_ligand_target_links,geneset = geneset_oi, ligand_target_matrix = ligand_target_matrix, n = 200) %>% bind_rows() %>% drop_na()
+
+active_ligand_target_links = prepare_ligand_target_visualization(ligand_target_df = active_ligand_target_links_df, ligand_target_matrix = ligand_target_matrix, cutoff = 0.2)
+
+order_ligands = intersect(best_upstream_ligands, colnames(active_ligand_target_links)) %>% rev() %>% make.names()
+order_targets = active_ligand_target_links_df$target %>% unique() %>% intersect(rownames(active_ligand_target_links)) %>% make.names()
+rownames(active_ligand_target_links) = rownames(active_ligand_target_links) %>% make.names() # make.names() for heatmap visualization of genes like H2-T23
+colnames(active_ligand_target_links) = colnames(active_ligand_target_links) %>% make.names() # make.names() for heatmap visualization of genes like H2-T23
+
+vis_ligand_target = active_ligand_target_links[order_targets,order_ligands] %>% t()
+p_ligand_target_network = vis_ligand_target %>% make_heatmap_ggplot("Prioritized ligands","Predicted target genes", color = "purple",legend_position = "top", x_axis_position = "top",legend_title = "Regulatory potential")  + theme(axis.text.x = element_text(face = "italic")) + scale_fill_gradient2(low = "whitesmoke",  high = "purple", breaks = c(0,0.0045,0.0090))
+p_ligand_target_network
+```
+```{r}
+lr_network_top = lr_network %>% filter(from %in% best_upstream_ligands & to %in% expressed_receptors) %>% distinct(from,to)
+best_upstream_receptors = lr_network_top %>% pull(to) %>% unique()
+
+lr_network_top_df_large = weighted_networks_lr %>% filter(from %in% best_upstream_ligands & to %in% best_upstream_receptors)
+
+lr_network_top_df = lr_network_top_df_large %>% spread("from","weight",fill = 0)
+lr_network_top_matrix = lr_network_top_df %>% select(-to) %>% as.matrix() %>% magrittr::set_rownames(lr_network_top_df$to)
+
+dist_receptors = dist(lr_network_top_matrix, method = "binary")
+hclust_receptors = hclust(dist_receptors, method = "ward.D2")
+order_receptors = hclust_receptors$labels[hclust_receptors$order]
+    
+dist_ligands = dist(lr_network_top_matrix %>% t(), method = "binary")
+hclust_ligands = hclust(dist_ligands, method = "ward.D2")
+order_ligands_receptor = hclust_ligands$labels[hclust_ligands$order]
+
+order_receptors = order_receptors %>% intersect(rownames(lr_network_top_matrix))
+order_ligands_receptor = order_ligands_receptor %>% intersect(colnames(lr_network_top_matrix))
+
+vis_ligand_receptor_network = lr_network_top_matrix[order_receptors, order_ligands_receptor]
+rownames(vis_ligand_receptor_network) = order_receptors %>% make.names()
+colnames(vis_ligand_receptor_network) = order_ligands_receptor %>% make.names()
+p_ligand_receptor_network = vis_ligand_receptor_network %>% t() %>% make_heatmap_ggplot("Ligands","Receptors", color = "mediumvioletred", x_axis_position = "top",legend_title = "Prior interaction potential")
+p_ligand_receptor_network
+```
+```{r}
+lr_network_strict = lr_network %>% filter(database != "ppi_prediction_go" & database != "ppi_prediction")
+ligands_bona_fide = lr_network_strict %>% pull(from) %>% unique()
+receptors_bona_fide = lr_network_strict %>% pull(to) %>% unique()
+
+lr_network_top_df_large_strict = lr_network_top_df_large %>% distinct(from,to) %>% inner_join(lr_network_strict, by = c("from","to")) %>% distinct(from,to)
+lr_network_top_df_large_strict = lr_network_top_df_large_strict %>% inner_join(lr_network_top_df_large, by = c("from","to"))
+
+lr_network_top_df_strict = lr_network_top_df_large_strict %>% spread("from","weight",fill = 0)
+lr_network_top_matrix_strict = lr_network_top_df_strict %>% select(-to) %>% as.matrix() %>% magrittr::set_rownames(lr_network_top_df_strict$to)
+
+dist_receptors = dist(lr_network_top_matrix_strict, method = "binary")
+hclust_receptors = hclust(dist_receptors, method = "ward.D2")
+order_receptors = hclust_receptors$labels[hclust_receptors$order]
+
+dist_ligands = dist(lr_network_top_matrix_strict %>% t(), method = "binary")
+hclust_ligands = hclust(dist_ligands, method = "ward.D2")
+order_ligands_receptor = hclust_ligands$labels[hclust_ligands$order]
+
+order_receptors = order_receptors %>% intersect(rownames(lr_network_top_matrix_strict))
+order_ligands_receptor = order_ligands_receptor %>% intersect(colnames(lr_network_top_matrix_strict))
+
+vis_ligand_receptor_network_strict = lr_network_top_matrix_strict[order_receptors, order_ligands_receptor]
+rownames(vis_ligand_receptor_network_strict) = order_receptors %>% make.names()
+colnames(vis_ligand_receptor_network_strict) = order_ligands_receptor %>% make.names()
+p_ligand_receptor_network_strict = vis_ligand_receptor_network_strict %>% t() %>% make_heatmap_ggplot("Ligands","Receptors", color = "mediumvioletred", x_axis_position = "top",legend_title = "Prior interaction potential\n(bona fide)")
+p_ligand_receptor_network_strict
+```
+```{r}
+torm <- c("IL1RN","GMFB","ALCAM","HLA-G","MANF","")
+selected_upstream_ligands <- best_upstream_ligands[!best_upstream_ligands %in% torm]
+selected_upstream_ligands <- c("APOE","ADAM17","TGFB1","LGALS3","CCL2","MMP9","SPP1")
+expression <- DotPlot(pd.nontumor, features = selected_upstream_ligands , cols = "RdYlBu", idents = c("SPP1_mono","C1QC_mono"))  + RotatedAxis() + coord_flip()
+expression
+```
+```{r}
+### ligand-target
+active_ligand_target_links_df = selected_upstream_ligands %>% lapply(get_weighted_ligand_target_links,geneset = geneset_oi, ligand_target_matrix = ligand_target_matrix, n = 250) %>% bind_rows() %>% drop_na()
+
+active_ligand_target_links = prepare_ligand_target_visualization(ligand_target_df = active_ligand_target_links_df, ligand_target_matrix = ligand_target_matrix, cutoff = 0.2)
+
+order_ligands = intersect(best_upstream_ligands, colnames(active_ligand_target_links)) %>% rev() %>% make.names()
+order_targets = active_ligand_target_links_df$target %>% unique() %>% intersect(rownames(active_ligand_target_links)) %>% make.names()
+rownames(active_ligand_target_links) = rownames(active_ligand_target_links) %>% make.names() # make.names() for heatmap visualization of genes like H2-T23
+colnames(active_ligand_target_links) = colnames(active_ligand_target_links) %>% make.names() # make.names() for heatmap visualization of genes like H2-T23
+
+vis_ligand_target = active_ligand_target_links[order_targets,order_ligands %>% rev()] %>% t()
+p_ligand_target_network = vis_ligand_target %>% make_heatmap_ggplot("Prioritized ligands","Predicted downstream target genes", color = "purple",legend_position = "top", x_axis_position = "top",legend_title = "Regulatory potential")  + theme(axis.text.x = element_text(face = "italic")) + scale_fill_gradient2(low = "whitesmoke",  high = "purple", breaks = c(0,0.0045,0.0090))
+p_ligand_target_network
+
+### ligand-receptor
+lr_network_top = lr_network %>% filter(from %in% selected_upstream_ligands & to %in% expressed_receptors) %>% distinct(from,to)
+best_upstream_receptors = lr_network_top %>% pull(to) %>% unique()
+
+lr_network_top_df_large = weighted_networks_lr %>% filter(from %in% best_upstream_ligands & to %in% best_upstream_receptors)
+
+lr_network_top_df = lr_network_top_df_large %>% spread("from","weight",fill = 0)
+lr_network_top_matrix = lr_network_top_df %>% select(-to) %>% as.matrix() %>% magrittr::set_rownames(lr_network_top_df$to)
+
+dist_receptors = dist(lr_network_top_matrix, method = "binary")
+hclust_receptors = hclust(dist_receptors, method = "ward.D2")
+order_receptors = hclust_receptors$labels[hclust_receptors$order]
+    
+dist_ligands = dist(lr_network_top_matrix %>% t(), method = "binary")
+hclust_ligands = hclust(dist_ligands, method = "ward.D2")
+order_ligands_receptor = hclust_ligands$labels[hclust_ligands$order]
+
+order_receptors = order_receptors %>% intersect(rownames(lr_network_top_matrix))
+order_ligands_receptor = order_ligands_receptor %>% intersect(colnames(lr_network_top_matrix))
+order_ligands_receptor = c("APOE","ADAM17","TGFB1","LGALS3","CCL2","MMP9","SPP1")
+
+vis_ligand_receptor_network = lr_network_top_matrix[order_receptors, order_ligands_receptor]
+rownames(vis_ligand_receptor_network) = order_receptors %>% make.names()
+colnames(vis_ligand_receptor_network) = order_ligands_receptor %>% make.names()
+p_ligand_receptor_network = vis_ligand_receptor_network %>% t() %>% make_heatmap_ggplot("Ligands","Receptors", color = "mediumvioletred", x_axis_position = "top",legend_title = "Prior interaction potential")
+p_ligand_receptor_network
+```
+```{r}
+cowplot::plot_grid(expression, p_ligand_receptor_network,p_ligand_target_network,  align = "hv",
+  nrow = 1)
+
+figures_without_legend = cowplot::plot_grid(
+  expression + theme(legend.position = "none", axis.ticks = element_blank(), axis.title.x = element_text(size = 12), axis.text.y = element_text(face = "italic", size = 9), axis.text.x = element_text(size = 9,  angle = 90,hjust = 0)) + ylab("Ligand Expression in Sender") + xlab("") + scale_y_discrete(position = "right"),
+  p_ligand_receptor_network + theme(legend.position = "none", axis.ticks = element_blank()) + theme(axis.title.x = element_text()) + ylab(""),
+  p_ligand_target_network + theme(legend.position = "none", axis.ticks = element_blank()) + ylab(""),
+  align = "hv",
+  nrow = 1,
+  rel_widths = c(2+6, ncol(vis_ligand_target) + 5, ncol(vis_ligand_target)+5))
+
+legends = cowplot::plot_grid(
+    ggpubr::as_ggplot(ggpubr::get_legend(expression)),
+    ggpubr::as_ggplot(ggpubr::get_legend(p_ligand_receptor_network )),
+    ggpubr::as_ggplot(ggpubr::get_legend(p_ligand_target_network)),
+    nrow = 1,
+    align = "h", rel_widths = c(1, 1, 1))
+tmp <- NULL
+combined_plot = cowplot::plot_grid(figures_without_legend, legends, rel_heights = c(10, 7), nrow = 2, align = "hv")
+combined_plot
+ggsave("~/PDAC/visualization/nichenet.png", combined_plot,width=3.5, height=2.3, units="in", scale=3)
+ggsave("~/PDAC/visualization/nichenet_legend.png", legends ,width=3.5, height=2, units="in", scale=3)
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.

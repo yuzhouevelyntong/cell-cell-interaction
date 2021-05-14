@@ -3,71 +3,305 @@ title: "Seurat Clustering R Notebook"
 output: html_notebook
 ---
 ```{r}
+library("fs")
+library("remotes")
+old_lib <- path_home_r("R/x86_64-pc-linux-gnu-library/old_lib/")
+```
+
+```{r}
 library(dplyr)
-library(Seurat)
+library("Seurat")
 library(patchwork)
 library(ggplot2)
+library(Connectome)
+library(cowplot)
+library(gridExtra)
 ```
 ```{r}
-pd.data <- read.csv("data/PDAC_Biopsies_23042cells_RawCounts.csv",sep=",", header=T,row.names=1, check.names=FALSE)
-pd.meta <- read.csv("data/PDAC_Biopsies_23042cells_Metadata.csv",sep=",", header=T,row.names=1)
+pd.data <- read.csv("~/PDAC/data/immune_only/NormalCells_RawDGE_210305.csv",sep=",", header=T,row.names=1, check.names=FALSE)
+pd.meta <- read.csv("~/PDAC/data/immune_only/NormalCells_metadata_210305.csv",sep=",", header=T,row.names=1)
 ```
 ```{r}
 genes <- row.names(pd.data)
 #createSeuratObject for all cells
-pd <- CreateSeuratObject(counts = pd.data, project = "pd",min.cells = 50, min.features = 200, is.expr=1, meta.data=pd.meta)
-Idents(pd) <- "cell.types"
-table(Idents(pd)) 
+pd.full <- CreateSeuratObject(counts = pd.data, project = "pd",min.cells = 50, min.features = 200, is.expr=1, meta.data=pd.meta)
 ```
 ```{r}
-pd <- NormalizeData(pd, normalization.method = "LogNormalize", scale.factor = 10000)
-pd <- FindVariableFeatures(pd, selection.method = "vst", nfeatures = 1070) 
-pd[["percent.mt"]] <- PercentageFeatureSet(object = pd, pattern = "^MT-")
+Idents(pd.full) <- "cell.types.complex"
+table(Idents(pd.full)) 
+```
+```{r}
+pd.full <- NormalizeData(pd.full, normalization.method = "LogNormalize", scale.factor = 10000)
+pd.full <- FindVariableFeatures(pd.full, selection.method = "vst", nfeatures = 1070) 
+pd.full[["percent.mt"]] <- PercentageFeatureSet(object = pd.full, pattern = "^MT-")
 # Identify the 10 most highly variable genes
-top10 <- head(VariableFeatures(pd), 10)
+top10 <- head(VariableFeatures(pd.full), 10)
 ```
 ```{r}
 # Plot variable features with labels
-plot1 <- VariableFeaturePlot(pd)
+plot1 <- VariableFeaturePlot(pd.full)
 plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
 plot2
-VlnPlot(pd, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0.05)
+VlnPlot(pd.full, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0.05)
 ```
 ```{r}
-gene.names <- rownames(pd)
-pd <- ScaleData(pd)
-pd <- RunPCA(pd, verbose = FALSE) # default features are previously
+gene.names <- rownames(pd.full)
+pd.full <- ScaleData(pd.full)
+pd.full <- RunPCA(pd.full, verbose = FALSE) # default features are previously
 ```
 #### Visualize PCA results
 ```{r}
-print(pd[["pca"]], dims = 1:5, nfeatures = 5)
-VizDimLoadings(pd, dims = 1:2, reduction = "pca")
-DimPlot(pd, reduction = "pca")
+print(pd.full[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(pd.full, dims = 1:2, reduction = "pca")
+DimPlot(pd.full, reduction = "pca")
 # Identify sig PCs
 # direct visualization 
-DimHeatmap(pd, dims = 1:15, cells = 500, balanced = TRUE)
+DimHeatmap(pd.full, dims = 1:15, cells = 500, balanced = TRUE)
 ```
 #### find clusters
 ```{r}
-pd <- FindNeighbors(pd, dims = 1:45) # only using significant PCs
-pd <- FindClusters(pd)
-pd <- RunUMAP(pd, dims = 1:45)
-pd <- RunTSNE(pd, dims = 1:45)
+pd.full <- FindNeighbors(pd.full, dims = 1:45) # only using significant PCs
+pd.full <- FindClusters(pd.full)
+pd.full <- RunUMAP(pd.full, dims = 1:45)
+pd.full <- RunTSNE(pd.full, dims = 1:45, check_duplicates = FALSE)
 ```
 #### plot clusters
-```{r, fig.width=6, fig.height=6}
-DimPlot(pd, label = TRUE) + NoLegend()
-DimPlot(pd, group.by = "cell.types", label = TRUE)
-DimPlot(pd, label = TRUE, reduction = 'tsne') + NoLegend()
-DimPlot(pd, label = TRUE, reduction = 'tsne', group.by = "cell.types", repel = TRUE) + NoLegend() + labs(title='Cell Type Visualization') + theme(plot.title = element_text(hjust = 0.5))
+```{r, fig.width=8, fig.height=6}
+DimPlot(pd.full, label = TRUE) + NoLegend()
+DimPlot(pd.full, group.by = "cell.types.complex", label = TRUE)
+DimPlot(pd.full, label = TRUE, reduction = 'tsne') + NoLegend()
+DimPlot(pd.full, label = TRUE, reduction = 'tsne', group.by = "cell.types.complex", repel = TRUE, cells = rownames(pd.meta)) + labs(title='Cell Type Visualization') + theme(plot.title = element_text(hjust = 0.5))
 ```
-```{r, fig.width=6, fig.height=6}
-pdf('visualization/TSNEplot_all_cells.pdf')
-DimPlot(pd, label = TRUE, reduction = 'tsne', group.by = "cell.types", repel = TRUE) + NoLegend() + labs(title='Cell Type Visualization') + theme(plot.title = element_text(hjust = 0.5))
-dev.off()
+```{r, fig.width=8, fig.height=6}
+a  = DimPlot(pd.full, label = TRUE, reduction = 'tsne', group.by = "cell.types.complex", repel = TRUE, cells = rownames(pd.meta)) + labs(title='Complex Cell Type Visualization') + theme(plot.title = element_text(hjust = 0.5))
+ggsave('~/PDAC/visualization/TSNEplot_by_cell_types_complex.png', a, width=2.6, height=2, units="in", scale=3)
+
+a = DimPlot(pd.full, label = TRUE, reduction = 'tsne', group.by = "cell.types", repel = TRUE, cells = rownames(pd.meta)) + labs(title='Cell Type Visualization') + theme(plot.title = element_text(hjust = 0.5))
+ggsave('~/PDAC/visualization/TSNEplot_by_cell_types.png', a, width=2.6, height=2, units="in", scale=3)
+```
+```{r, fig.width=8, fig.height=6}
+Idents(pd.full) <- "Tumor.class"
+table(Idents(pd.full))
+a = DimPlot(pd.full, label = TRUE, reduction = 'tsne', group.by = "Tumor.class", repel = TRUE, cells = rownames(pd.meta), label.size = 0) + labs(title='Grouped by Tumor Severity') + theme(plot.title = element_text(hjust = 0.5))
+ggsave('~/PDAC/visualization/TSNEplot_by_tumor_severity.png', a, width=2.6, height=2, units="in", scale=3)
+```
+# Connectome
+#### subset dataset
+```{r}
+pd.data <- read.csv("~/PDAC/data/immune_only/NormalCells_RawDGE_210305.csv",sep=",", header=T,row.names=1, check.names=FALSE)
+pd.meta <- read.csv("~/PDAC/data/immune_only/NormalCells_metadata_210305.csv",sep=",", header=T,row.names=1)
+pd.data <- pd.data[,rownames(pd.meta)]
+
+pd <- CreateSeuratObject(counts = pd.data, project = "pd",min.cells = 50, min.features = 200, is.expr=1, meta.data=pd.meta)
+```
+
+```{r}
+pd <- NormalizeData(pd)
+connectome.genes <- union(Connectome::ncomms8866_human$Ligand.ApprovedSymbol,Connectome::ncomms8866_human$Receptor.ApprovedSymbol)
+genes <- connectome.genes[connectome.genes %in% rownames(pd)]
+pd <- ScaleData(pd,features = genes)
+Idents(pd) <- 'cell.types.complex'
+pd.con <- CreateConnectome(pd,species = 'human',min.cells.per.ident = 75,p.values = F,calculate.DOR = F)
+```
+#### filter edges
+```{r}
+p1 <- ggplot(pd.con, aes(x=ligand.scale)) + geom_density() + ggtitle('Ligand.scale')
+p2 <- ggplot(pd.con, aes(x=recept.scale)) + geom_density() + ggtitle('Recept.scale')
+p3 <- ggplot(pd.con, aes(x=percent.target)) + geom_density() + ggtitle('Percent.target')
+p4 <- ggplot(pd.con, aes(x=percent.source)) + geom_density() + ggtitle('Percent.source')
+a = plot_grid(p1,p2,p3,p4)
+ggsave('~/PDAC/visualization/Connectome_distribution.png', a, width=3, height=2, units="in", scale=3)
 ```
 ```{r}
+pd.con2 <- FilterConnectome(pd.con,min.pct = 0.1,min.z = 0.20,remove.na = T)
+```
+#### look into one receptor/ligand
+```{r}
+p1 <- NetworkPlot(pd.con2,features = 'VEGFA',min.pct = 0.1,weight.attribute = 'weight_sc',include.all.nodes = T)
+p2 <- NetworkPlot(pd.con2,features = 'VEGFA',min.pct = 0.5,weight.attribute = 'weight_sc',include.all.nodes = T)
+```
+#### quick identification of top ligand producers and correlating receptor receivers
+```{r}
+a <- Centrality(pd.con2,
+           modes.include = NULL,
+           min.z = 1,
+           min.pct = 0.35,
+           weight.attribute = 'weight_sc',
+           targets.include = c('CTL','T_Regs','DC','Fibroblast','Endothelial','SPP1_mono','C1QC_mono'),
+           sources.include = c('CTL','T_Regs','DC','Fibroblast','SPP1_mono','C1QC_mono'),
+           group.by = 'mode')
+ggsave('~/PDAC/visualization/centrality_of_modes.png', a, width=3, height=2, units="in", scale=3)
+```
+#### quick identification of known ligand/receptor
+```{r}
+Centrality(pd.con2,
+           modes.include = c('VEGF'),
+           weight.attribute = 'weight_sc',
+           min.z = 0,
+           group.by = 'mechanism')
+```
+#### 2-cell interactome
+```{r}
+for (i in c('NaiveT','CTL','T_Regs','NK','DC','Fibroblasts','Endothelial','B_Cells')) {
+p1 <- CellCellScatter(pd.con2,sources.include = 'SPP1_mono',targets.include = i,
+                label.threshold = 3,
+                weight.attribute = 'weight_sc',min.pct = 0.3,min.z = 0.8)
+p1 <- p1 + xlim(0,NA) + ylim(0,NA)
+print(p1)
+}
+for (i in c('NaiveT','CTL','T_Regs','NK','DC','Fibroblasts','Endothelial','B_Cells')) {
+p1 <- CellCellScatter(pd.con2,targets.include = 'SPP1_mono',sources.include = i,
+                label.threshold = 3,
+                weight.attribute = 'weight_sc',min.pct = 0.3,min.z = 0.8)
+p1 <- p1 + xlim(0,NA) + ylim(0,NA)
+print(p1)
+}
+```
 
+```{r}
+for (i in c('NaiveT','CTL','T_Regs','NK','DC','Fibroblasts','Endothelial','B_Cells')) {
+p1 <- CellCellScatter(pd.con2,sources.include = 'C1QC_mono',targets.include = i,
+                label.threshold = 3,
+                weight.attribute = 'weight_sc',min.pct = 0.3,min.z = 0.8)
+p1 <- p1 + xlim(0,NA) + ylim(0,NA)
+print(p1)
+}
+for (i in c('NaiveT','CTL','T_Regs','NK','DC','Fibroblasts','Endothelial','B_Cells')) {
+p1 <- CellCellScatter(pd.con2,targets.include = 'C1QC_mono',sources.include = i,
+                label.threshold = 3,
+                weight.attribute = 'weight_sc',min.pct = 0.3,min.z = 0.8)
+p1 <- p1 + xlim(0,NA) + ylim(0,NA)
+print(p1)
+}
+```
+
+```{r}
+png('~/PDAC/visualization/CircosPlot/TAM_asSources.png', width=8, height=5, units = 'in', res = 300)
+CircosPlot(pd.con,sources.include = c('C1QC_mono','SPP1_mono','FCN1_mono') ,lab.cex = 0.6, min.z = 1,targets.include = c('NaiveT','CTL','T_Regs','NK','DC','Fibroblast','Endothelial', 'B_Cells'))
+dev.off()
+```
+
+```{r}
+test <- data.frame(pd.con2 %>% group_by(vector) %>% top_n(5,weight_sc))
+png('~/PDAC/visualization/CircosPlot/C1QC_asTarget.png', width=7, height=5, units = 'in', res = 300)
+CircosPlot(test,targets.include = 'C1QC_mono',lab.cex = 0.6, min.z = 1,
+           sources.include = c('NaiveT','CTL','T_Regs','NK','DC','Fibroblast','Endothelial'),
+           title = "C1QC+ Macrophages as Target")
+dev.off()
+png('~/PDAC/visualization/CircosPlot/C1QC_asSource.png', width=7, height=5, units = 'in', res = 300)
+CircosPlot(test,targets.include = c('NaiveT','CTL','T_Regs','NK','DC','Fibroblast','Endothelial'),lab.cex = 0.6, min.z = 1,
+           sources.include = 'C1QC_mono', edge.color.by.source = FALSE,
+           title = "C1QC+ Macrophages as Source")
+dev.off()
+png('~/PDAC/visualization/CircosPlot/SPP1_asTarget.png', width=7, height=5, units = 'in', res = 300)
+CircosPlot(test,targets.include = 'SPP1_mono',lab.cex = 0.6, min.z = 1,
+           sources.include = c('NaiveT','CTL','T_Regs','NK','DC','Fibroblast','Endothelial'),
+           title = "SPP1+ Macrophages as Target")
+dev.off()
+png('~/PDAC/visualization/CircosPlot/SPP1_asSource.png', width=7, height=5, units = 'in', res = 300)
+a = CircosPlot(test,targets.include = c('NaiveT','CTL','T_Regs','NK','DC','Fibroblast','Endothelial'),lab.cex = 0.6, min.z = 1,
+           sources.include = 'SPP1_mono', edge.color.by.source = FALSE,
+           title = "SPP1+ Macrophages as Source")
+dev.off()
+
+test <- data.frame(pd.con2 %>% group_by(vector) %>% top_n(5,weight_sc))
+png('~/PDAC/visualization/CircosPlot/FCN1_asTarget.png', width=7, height=5, units = 'in', res = 300)
+CircosPlot(test,targets.include = 'FCN1_mono',lab.cex = 0.6, min.z = 1,
+           sources.include = c('NaiveT','CTL','T_Regs','NK','DC','Fibroblast','Endothelial'),
+           title = "FCN1+ Macrophages as Target")
+dev.off()
+png('~/PDAC/visualization/CircosPlot/FCN1_asSource.png', width=7, height=5, units = 'in', res = 300)
+CircosPlot(test,targets.include = c('NaiveT','CTL','T_Regs','NK','DC','Fibroblast','Endothelial'),lab.cex = 0.6, min.z = 1,
+           sources.include = 'FCN1_mono', edge.color.by.source = FALSE,
+           title = "FCN1+ Macrophages as Source")
+dev.off()
+
+png('~/PDAC/visualization/CircosPlot/TAM_asTarget.png', width=7, height=5, units = 'in', res = 300)
+CircosPlot(test,sources.include = c('NaiveT','CTL','T_Regs','NK','DC','Fibroblast','Endothelial'),lab.cex = 0.6, min.z = 1,
+            targets.include = c('FCN1_mono','SPP1_mono','C1QC_mono'), edge.color.by.source = FALSE,
+            title = "Macrophages as Target")
+dev.off()
+png('~/PDAC/visualization/CircosPlot/TAM_asSource.png', width=7, height=5, units = 'in', res = 300)
+CircosPlot(test,targets.include = c('NaiveT','CTL','T_Regs','NK','DC','Fibroblast','Endothelial'),lab.cex = 0.6, min.z = 1,
+            sources.include = c('FCN1_mono','SPP1_mono','C1QC_mono'), edge.color.by.source = FALSE,
+            title = "Macrophages as Source")
+dev.off()
+```
+#### check for ligand/receptor expression 
+```{r}
+VlnPlot(pd.full, idents = c("SPP1_mono","C1QC_mono"), features = "ITGAM")
+VlnPlot(pd.full, split.by = "Tumor.class", features = "TGF", group.by = "cell.types")
+```
+
+### differential analysis between basal and classical subtypes
+```{r}
+# Split the object by condition:
+cb.list <- SplitObject(pd, split.by = 'Tumor.class')
+# Normalize, Scale, and create Connectome:
+cb.con.list <- list()
+for (i in 1:length(cb.list)){
+  cb.list[[i]] <- NormalizeData(cb.list[[i]])
+  cb.list[[i]] <- ScaleData(cb.list[[i]],features = rownames(cb.list[[i]]))
+  Idents(cb.list[[i]]) <- 'cell.types'
+  cb.con.list[[i]] <- CreateConnectome(cb.list[[i]],species = 'human',p.values = F)
+}
+names(cb.con.list) <- names(cb.list)
+```
+#### make differential connectome
+```{r}
+diff <- DifferentialConnectome(cb.con.list[[1]],cb.con.list[[2]])
+```
+#### find significant
+```{r}
+# Stash idents and make new identities which identify each as stimulated vs. control
+Idents(pd) <- "cell.types"
+celltypes <- as.character(unique(Idents(pd)))
+celltypes.classical <- paste(celltypes, 'Classical', sep = '_')
+celltypes.basal <- paste(celltypes, 'Basal', sep = '_')
+Idents(pd) <- "cell.types"
+pd$celltype.condition <- paste(Idents(pd), pd$Tumor.class, sep = "_")
+#pd$celltype <- Idents(pd)
+Idents(pd) <- "celltype.condition"
+
+# Identify which ligands and receptors, for which cell populations, have an adjusted p-value < 0.05 based on a Wilcoxon rank test
+diff.p <- data.frame()
+for (i in 1:length(celltypes)){
+  temp <- FindMarkers(pd,
+                      ident.1 = celltypes.basal[i],
+                      ident.2 = celltypes.classical[i],
+                      verbose = FALSE,
+                      features = genes,
+                      min.pct = 0.25,
+                      logfc.threshold = 0.25)
+  temp2 <- subset(temp, p_val_adj < 0.05)
+  if (nrow(temp2)>0){
+  temp3 <- data.frame(genes = rownames(temp2),cells = celltypes[i])
+  diff.p <- rbind(diff.p, temp3)
+  }
+}
+diff.p$cell.gene <- paste(diff.p$cells,diff.p$genes,sep = '.')
+
+# Filter differential connectome to only include significantly perturbed edges
+diff$source.ligand <- paste(diff$source,diff$ligand,sep = '.')
+diff$target.receptor <- paste(diff$target,diff$receptor,sep = '.')
+diff.sub <- subset(diff,source.ligand %in% diff.p$cell.gene & target.receptor %in% diff.p$cell.gene)
+```
+```{r}
+png('~/PDAC/visualization/differential_scoring.png', width=7, height=5, units = 'in', res = 300)
+a <- DifferentialScoringPlot(diff.sub,min.score = 0.5,min.pct = 0.1,infinity.to.max = T)
+ggsave('~/PDAC/visualization/differential_scoring.png', a, width=3, height=2, units="in", scale=3)
+```
+```{r}
+png('~/PDAC/visualization/differential_circos.png', width=7, height=5, units="in", res=300)
+a <- CircosDiff(diff.sub,min.score = 0.5,min.pct = 0.1,lab.cex = 0.4)
+dev.off()
+```
+
+```{r}
+CircosDiff(diff.sub,min.score = 0.5,min.pct = 0.1,lab.cex = 0.4,
+           sources.include = c('Macrophage'), targets.include = c('T_Cells','Fibroblasts','DC'), edge.color.by.source = FALSE)
+CircosDiff(diff.sub,min.score = 0.2,min.pct = 0.1,lab.cex = 0.4,
+           targets.include = c('Macrophage'),sources.include = c('T_Cells','Fibroblasts','DC'))
 ```
 
 Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
